@@ -1,0 +1,52 @@
+apiVersion: v1
+baseDomain: ${BASE_DOMAIN}
+metadata:
+  name: ${CLUSTER_NAME}
+credentialsMode: Manual
+compute:
+- architecture: ${ARCH}
+  hyperthreading: Enabled
+  name: worker
+  platform:
+    aws:
+      metadataService:
+        authentication: Required
+      amiID: ${AMI_ID}
+      type: ${WORKER_INSTANCE_TYPE}
+      zones:
+      - ${AZ}
+  replicas: ${WORKER_REPLICAS}
+controlPlane:
+  architecture: ${ARCH}
+  hyperthreading: Enabled
+  name: master
+  platform:
+    aws:
+      metadataService:
+        authentication: Required
+      amiID: ${AMI_ID}
+      type: ${MASTER_INSTANCE_TYPE}
+  replicas: ${MASTER_REPLICAS}
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: ${VPC_CIDR}
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  aws:
+    region: ${REGION}
+    userTags:
+      owner: ${OWNER_TAG}
+      purpose: ${PURPOSE_TAG}
+      cluster: ${CLUSTER_NAME}
+    subnets:
+    - ${SUBNET_PUBLIC}
+    - ${SUBNET_PRIVATE}
+publish: External
+pullSecret: '${PULL_SECRET}'
+sshKey: |
+  ${SSH_KEY}
