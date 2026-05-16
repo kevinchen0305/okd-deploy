@@ -28,7 +28,6 @@ main() {
 
   local version=""
   local force=false
-  while (($# > 0)); do :; done   # placate shellcheck
   set -- "${args[@]+"${args[@]}"}"
 
   while (($# > 0)); do
