@@ -23,42 +23,48 @@ scripts/preflight.sh --clusters <name1>[,<name2>,...] --version <okd-version> --
 
 ## 行為
 
-1. 呼叫 `scripts/preflight.sh`，把 N 個 cluster 名稱與目標版本帶進去。
-2. 該腳本會輸出一份 JSON 結果到 stdout，欄位至少包含：
+1. 呼叫 `scripts/preflight.sh --json`，把 N 個 cluster 名稱與目標版本帶進去。
+2. 該腳本輸出 JSON 到 stdout，schema 如下（**check name 與 `all_passed` 欄位都跟 script 對齊，不要自己改名**）：
    ```json
    {
-     "clusters": ["dev01", "dev02"],
      "version": "4.18.0-okd-scos.10",
      "region": "ap-northeast-1",
+     "clusters": ["dev01", "dev02"],
      "checks": [
-       {"name": "aws_quota_vpc",      "status": "ok|warn|fail", "detail": "..."},
-       {"name": "aws_quota_eip",      "status": "...", "detail": "..."},
-       {"name": "aws_quota_natgw",    "status": "...", "detail": "..."},
-       {"name": "aws_quota_ec2",      "status": "...", "detail": "..."},
-       {"name": "sts_valid",          "status": "...", "detail": "expires_in_seconds=..."},
-       {"name": "ami_exists",         "status": "...", "detail": "ami_id=..."},
-       {"name": "tools_present",      "status": "...", "detail": "bin/4.18.0-okd-scos.10/{openshift-install,ccoctl,oc}"},
-       {"name": "cluster_name_free",  "status": "...", "detail": "clusters/dev01 not exists"},
-       {"name": "account_id_consistent", "status": "...", "detail": "sts_account=123 install_config_account=123"}
+       {"name": "tools_installed",     "status": "ok|warn|fail", "detail": "...", "suggestion": "..."},
+       {"name": "sts_valid",           "status": "...", "detail": "arn=..."},
+       {"name": "name_conflict",       "status": "...", "detail": "clusters/dev01 not exists"},
+       {"name": "ami_exists",          "status": "...", "detail": "ami-... in region"},
+       {"name": "account_consistency", "status": "...", "detail": "STS account=..."},
+       {"name": "quota_vpcs",          "status": "...", "detail": "limit=X used=Y remaining=Z need=N"},
+       {"name": "quota_nat_gws",       "status": "...", "detail": "..."},
+       {"name": "quota_eips",          "status": "...", "detail": "..."},
+       {"name": "quota_vcpus_m5",      "status": "...", "detail": "..."}
      ],
-     "overall": "ok|warn|fail"
+     "all_passed": true
    }
    ```
-3. 解析 JSON 後，把結果以 markdown 表格呈現給使用者：
+3. Parse JSON 後，把結果以 markdown 表格呈現給使用者：
 
    | Check | Status | Detail |
    |---|---|---|
-   | aws_quota_vpc | ok | requested=2 remaining=3 |
-   | sts_valid | warn | expires_in=42min |
+   | tools_installed | ok | bin/<ver>/openshift-install/ccoctl/oc |
+   | sts_valid | ok | arn=assumed-role/... |
+   | quota_vpcs | warn | limit=5 used=4 remaining=1 need=2 |
    | ... | ... | ... |
 
-4. 若 `overall == "fail"`：
-   - 列出所有 `status=fail` 的項目。
-   - 對每個 fail 嘗試命中 playbook（如 `quota-exceeded-vpc`、`sts-expired`、`ami-not-found`、`account-id-mismatch`）；若有命中，**呼叫 `okd-diagnose` skill** 把該失敗丟過去，由 diagnose 列出建議。
+4. 若 `all_passed == false`（即任何 check `status=fail`）：
+   - 列出所有 fail 項，附 `suggestion` 欄裡的修復指令。
+   - 嘗試命中 playbook，命中則 **呼叫 `okd-diagnose` skill** 由它列建議。check name → playbook 對照：
+     - `quota_vpcs` → `quota-exceeded-vpc`
+     - `quota_eips` → `quota-exceeded-eip`
+     - `quota_vcpus_m5` → `quota-exceeded-ec2`
+     - `sts_valid` → `sts-expired`
+     - `ami_exists` → `ami-not-found`
    - **絕不**自動修復。
 
-5. 若 `overall == "warn"`：列警告但回傳「可繼續」訊號給呼叫端（如 `okd-build`）。
-6. 若 `overall == "ok"`：直接回傳成功，呼叫端可進入下一步。
+5. 若 `all_passed == true` 但有 `status=warn` 項：列警告，回「可繼續」訊號給呼叫端（如 `okd-build`）。
+6. 若全 ok：直接回傳成功，呼叫端進入下一步。
 
 ## 範例調用
 

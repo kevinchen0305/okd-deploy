@@ -97,11 +97,7 @@ scripts/preflight.sh --clusters dev01,dev02,dev03 --version 4.18.0-okd-scos.10 -
    scripts/patch-machineset.sh --cluster <name>
    ```
 
-7. **合併 CCO / cred manifests**
-   ```bash
-   cp clusters/<name>/cco_manifests/*       clusters/<name>/manifests/
-   cp clusters/<name>/credrequests/manifests/* clusters/<name>/manifests/
-   ```
+7. **(no-op for current ccoctl flow)** — 早期版本需要 `cp cco_manifests/* manifests/`，但目前 `ccoctl aws create-identity-provider` + `create-iam-roles` 已經把 `cluster-authentication-02-config.yaml` 跟 6 個 credential secret manifests 直接寫到 `clusters/<name>/manifests/`，無另外 copy 步驟。`install.sh` 仍保留 `credrequests/` → `manifests/` 的 copy 作為 STS Manual 模式 CCO 對齊用。
 
 8. **installing**：phase=`installing`
    ```bash

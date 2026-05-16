@@ -28,6 +28,16 @@ jq . clusters/<name>/status.json
 抓出：
 - `phase`（如 `installing`、`verifying`、`tearing_down`...）
 - `last_error`（若有）
+- `verify_summary`（若 phase 已過 `verifying`）
+
+**Early exit — 「沒問題可診斷」**：若 `phase=ready` 且 `last_error=null` 且 `verify_summary.all_passed=true`，直接回覆：
+
+```
+Cluster <name> 健康。phase=ready, verify_summary 全綠, last_error=null。
+無需 diagnose。如懷疑特定問題，重跑 /okd-verify <name> 取得最新狀態。
+```
+
+不進後續步驟、不寫 `_unknown.md`、不呼叫 playbook 比對。
 
 ### 第 2 步：依 phase 收集診斷材料
 
@@ -35,13 +45,16 @@ jq . clusters/<name>/status.json
 
 | phase | 收集內容 |
 |---|---|
+| `pending` | `clusters/<name>/status.json` 本身；通常代表 init 後就沒前進，看 last_error |
 | `provisioning_vpc` | `clusters/<name>/terraform/terraform.log`（或 stderr 紀錄） |
 | `getting_creds` / `setting_up_iam` | `scripts/ccoctl-setup.sh` 的 stdout/stderr 紀錄 |
 | `rendering_config` | `scripts/render-config.sh` 輸出；檢查模板變數是否齊 |
 | `patching_manifests` | `scripts/patch-machineset.sh` 輸出 |
 | `installing` | `clusters/<name>/.openshift_install.log` 最後 200 行；`aws ec2 describe-instances --filters "Name=tag:cluster,Values=<name>"` |
 | `verifying` | `oc get co -o yaml`、`oc get nodes -o yaml`、`clusters/<name>/verify-report.json` |
-| `tearing_down` | `clusters/<name>/terraform/terraform.log`；`openshift-install destroy` 紀錄 |
+| `ready` | (Early exit 已處理；若使用者強制要再診斷，視同 `verifying` 收集 oc 狀態) |
+| `tearing_down` | `clusters/<name>/terraform/terraform.log`；`openshift-install destroy` 紀錄；額外掃 `aws ec2 describe-network-interfaces / describe-vpc-endpoints / describe-security-groups` 找 GuardDuty / orphan ENI |
+| `destroyed` | (健康狀態；若使用者跑 diagnose 多半是想確認真的清乾淨) — 掃 `aws ec2 describe-vpcs --filters Name=tag:Name,Values=<name>-vpc` 等驗證殘留 |
 
 `oc` / `openshift-install` 一律走 `bin/<version>/`，version 取自 `clusters/<name>/version`。
 

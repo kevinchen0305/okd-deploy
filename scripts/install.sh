@@ -42,17 +42,14 @@ main() {
   pushd "$cdir" >/dev/null
 
   # Copy ccoctl outputs back into manifests/ — match build-okd.md exactly.
-  if [[ -d cco_manifests ]]; then
-    log_info "[$cluster] cp cco_manifests/* manifests/"
-    if [[ "$DRY_RUN" != "true" ]]; then
-      cp -r cco_manifests/. manifests/
-    fi
-  else
-    log_warn "[$cluster] cco_manifests/ not found — assuming already merged"
-  fi
+  # Note: legacy build-okd.md mentioned `cp cco_manifests/* manifests/`, but
+  # current ccoctl (create-identity-provider + create-iam-roles) writes the
+  # cluster-auth + 6 credential secret manifests directly into manifests/.
+  # No cco_manifests/ dir is ever produced, so we no longer check for it.
 
   if [[ -d credrequests ]]; then
-    # build-okd.md says: cp credrequests/* manifests
+    # CredentialsRequest CR templates — STS Manual mode CCO uses them to
+    # match against the Secrets ccoctl already created in manifests/.
     log_info "[$cluster] cp credrequests/* manifests/"
     if [[ "$DRY_RUN" != "true" ]]; then
       cp -r credrequests/. manifests/

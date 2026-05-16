@@ -52,7 +52,17 @@ rm -rf clusters/<name>
 
 ### 第 2 步：失敗時自動 diagnose
 
-任何 `terraform destroy` 失敗（典型：`DependencyViolation`、殘留 ENI / SG 卡住）→ sub-agent 立即呼叫 `okd-diagnose` skill，把 cluster 名與 phase=`tearing_down` 丟過去，比對 `teardown-orphaned-resource` 等 playbook。**不自動 retry、不自動強刪**，等使用者選擇。
+任何 `terraform destroy` 失敗（典型：`DependencyViolation`、殘留 ENI / SG 卡住）→ sub-agent 立即呼叫 `okd-diagnose` skill，把 cluster 名與 phase=`tearing_down` 丟過去，比對：
+
+- `teardown-orphaned-resource` — generic DependencyViolation（ENI / LB / SG / route53）
+- `teardown-guardduty-vpc-residue` — 帳號啟用 GuardDuty Runtime Monitoring 時，AWS 自動往 VPC 塞的 `guardduty-data` endpoint 跟 `GuardDutyManagedSecurityGroup-*` SG。terraform 看不見就卡 destroy
+
+**不自動 retry、不自動強刪**，等使用者選擇。
+
+### 重要 (post-mortem from 2026-05-16 lifecycle test)
+
+- teardown.sh 的 `terraform destroy` 必須帶 `-var "cluster_name=..."` `-var "region=..."` `-var "az=..."`（從 `clusters/<name>/status.json` 讀），加 `AWS_REGION` env 給 AWS provider。否則 layer 2 失敗、所有 terraform 建的 VPC/subnets/NAT GW 全留下。
+- `--purge` 跟 terraform destroy 失敗合在一起的後果：`clusters/<name>/` 連 tfstate 一起被刪 → 無法再用 terraform 收尾，只能 aws CLI 手動清。若 destroy 失敗，**不要 `--purge`**，先收乾淨再 purge。
 
 ### 第 3 步：主 agent 聚合
 
