@@ -5,9 +5,12 @@ OKD 4.18 on AWS 部署自動化（Lab 用）— IaC + Claude Code Skills 驅動�
 ## 一次性設定
 
 ```bash
-# 1. 安裝外部工具（自己安裝）
-#    需要：terraform >=1.5、aws CLI、jq、yq、oathtool、envsubst
-#    開發/測試用（選擇性）：shellcheck、bats
+# 1. 安裝外部工具 — fresh Ubuntu/Debian EC2 一行搞定
+./scripts/bootstrap-host.sh
+#
+# 裝：jq, gettext-base (envsubst), unzip, oathtool, bats,
+#     aws CLI v2, terraform, mikefarah/yq v4, gh
+# 注意：apt 的 yq 是 python-yq，跟我們的腳本不相容，bootstrap 會強制換成 mikefarah/yq v4
 
 # 2. 下載 OKD 工具到 bin/<version>/
 ./scripts/install-tools.sh 4.18.0-okd-scos.10
