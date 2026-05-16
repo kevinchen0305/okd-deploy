@@ -88,7 +88,7 @@ main() {
     local tmp
     tmp="$(mktemp -d)"
     log_info "Downloading $url"
-    if ! run_cmd curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/$tar" "$url"; then
+    if ! run_cmd curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$tmp/$tar" "$url"; then
       rm -rf "$tmp"
       fail_download "$url"
     fi
