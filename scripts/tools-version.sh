@@ -22,9 +22,8 @@ EOF
 }
 
 main() {
-  local args=()
-  mapfile -t args < <(parse_dry_run_flag "$@")
-  set -- "${args[@]+"${args[@]}"}"
+  parse_dry_run_flag "$@"
+  set -- "${PARSED_ARGS[@]+"${PARSED_ARGS[@]}"}"
 
   local cluster=""
   while (($# > 0)); do

@@ -175,20 +175,24 @@ run_cmd() {
   fi
 }
 
-# 解析共用 --dry-run 旗標：每個 script 開頭呼叫
+# 解析共用 --dry-run 旗標。設定全域 DRY_RUN，並把剩餘 args 寫入全域
+# PARSED_ARGS 陣列。必須在 caller 的 shell 直接呼叫 (不要包在 process
+# substitution / command substitution 裡)，否則 DRY_RUN 出不來。
+#
+# 用法：
+#   parse_dry_run_flag "$@"
+#   set -- "${PARSED_ARGS[@]+"${PARSED_ARGS[@]}"}"
 parse_dry_run_flag() {
-  local args=("$@")
-  local out=()
-  for a in "${args[@]}"; do
+  PARSED_ARGS=()
+  local a
+  for a in "$@"; do
     if [[ "$a" == "--dry-run" ]]; then
       DRY_RUN=true
       export DRY_RUN
     else
-      out+=("$a")
+      PARSED_ARGS+=("$a")
     fi
   done
-  # 印剩餘參數（要 caller 接收 array）
-  printf '%s\n' "${out[@]}"
 }
 
 # ──────────────────────────────────────────────────────────

@@ -29,9 +29,8 @@ EOF
 }
 
 main() {
-  local args=()
-  mapfile -t args < <(parse_dry_run_flag "$@")
-  set -- "${args[@]+"${args[@]}"}"
+  parse_dry_run_flag "$@"
+  set -- "${PARSED_ARGS[@]+"${PARSED_ARGS[@]}"}"
 
   local profile="" role_arn="" mfa_arn="" secret_file="" out_file=""
   local duration=43200

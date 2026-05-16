@@ -22,13 +22,11 @@ EOF
 }
 
 main() {
-  # Strip --dry-run from args first
-  local args=()
-  mapfile -t args < <(parse_dry_run_flag "$@")
+  parse_dry_run_flag "$@"
+  set -- "${PARSED_ARGS[@]+"${PARSED_ARGS[@]}"}"
 
   local version=""
   local force=false
-  set -- "${args[@]+"${args[@]}"}"
 
   while (($# > 0)); do
     case "$1" in
