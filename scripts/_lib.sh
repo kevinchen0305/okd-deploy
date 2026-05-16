@@ -65,7 +65,7 @@ tools_dir() {
 # Status.json 操作
 # ──────────────────────────────────────────────────────────
 # 嚴格列舉 phase
-declare -a VALID_PHASES=(
+declare -ag VALID_PHASES=(
   pending
   provisioning_vpc
   getting_creds
