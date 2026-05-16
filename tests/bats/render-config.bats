@@ -20,6 +20,10 @@ setup() {
   export SUBNET_PRIVATE="subnet-bbb"
   export VPC_CIDR="10.0.0.0/16"
   export PULL_SECRET='{"auths":{"fake":{"auth":"x"}}}'
+  export MASTER_INSTANCE_TYPE="m5.2xlarge"
+  export WORKER_INSTANCE_TYPE="m5.xlarge"
+  export MASTER_REPLICAS=1
+  export WORKER_REPLICAS=2
   SSH_KEY_FILE="$(mktemp)"
   echo "ssh-rsa AAAAfake test@host" >"$SSH_KEY_FILE"
   export SSH_KEY="$SSH_KEY_FILE"

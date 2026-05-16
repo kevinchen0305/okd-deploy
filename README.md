@@ -21,6 +21,12 @@ export VPC_CIDR="10.0.0.0/16"
 export PULL_SECRET=$(cat ~/pull-secret.json)
 export SSH_KEY=~/.ssh/id_rsa.pub
 
+# Sizing — 沒有 default，必須明確設定（避免無意中跑大機型）
+export MASTER_INSTANCE_TYPE="m5.2xlarge"   # lab 推薦；prod HA 用更大
+export WORKER_INSTANCE_TYPE="m5.xlarge"    # lab 推薦；重 workload 用 m5.4xlarge
+export MASTER_REPLICAS=1                   # lab=1, prod=3
+export WORKER_REPLICAS=2
+
 # 4. 設定 STS / MFA 機制（lab：以 oathtool 自動 TOTP）
 echo "<base32-mfa-secret>" > ~/.okd-mfa-secret
 chmod 600 ~/.okd-mfa-secret

@@ -27,10 +27,17 @@ description: Use when user wants to build (create) one or more OKD 4.18 clusters
 | `AMI_ID` | RHCOS AMI ID（region 相關） |
 | `REGION` | AWS region，如 `ap-northeast-1` |
 | `AZ` | 單 AZ 部署用（lab-only） |
-| `PULL_SECRET` | Pull secret 檔路徑 |
+| `VPC_CIDR` | VPC CIDR，如 `10.0.0.0/16` |
+| `PULL_SECRET` | Pull secret JSON 字串內容（不是路徑） |
 | `SSH_KEY` | SSH public key 檔路徑 |
+| `MASTER_INSTANCE_TYPE` | 例 `m5.2xlarge`。**沒有 default — 每個集群都要明確選**，避免無意中跑 $0.768/hr 的機型 |
+| `WORKER_INSTANCE_TYPE` | 例 `m5.xlarge`（lab 推薦）/`m5.4xlarge`（重 workload）。**無 default** |
+| `MASTER_REPLICAS` | lab 只能 `1`；HA 一律 `3` |
+| `WORKER_REPLICAS` | 例 `2`。每多一台直接乘上 `WORKER_INSTANCE_TYPE` 小時費率 |
 
 缺任何一項立即終止，回應使用者：「請先設定環境變數 X / Y / Z（建議寫進 `.env`）」。
+
+**sizing 為什麼強制**：master/worker instance type 跟 replicas 直接決定 AWS 帳單，不該被 silent default 蓋掉。`render-config.sh` 缺這四個會直接 exit，不允許「忘了設就跑」。
 
 ## 整體流程
 

@@ -47,21 +47,22 @@ main() {
 
   require_cmd envsubst yq
 
-  # Required env vars.
+  # Required env vars. Sizing (instance types + replicas) is intentionally
+  # required, not defaulted — every cluster should be sized deliberately, not
+  # silently end up on $1.92/hr m5.4xlarge workers because nobody noticed.
   local v
-  for v in BASE_DOMAIN AMI_ID REGION AZ SUBNET_PUBLIC SUBNET_PRIVATE VPC_CIDR PULL_SECRET SSH_KEY; do
+  for v in BASE_DOMAIN AMI_ID REGION AZ SUBNET_PUBLIC SUBNET_PRIVATE VPC_CIDR \
+           PULL_SECRET SSH_KEY \
+           MASTER_INSTANCE_TYPE WORKER_INSTANCE_TYPE \
+           MASTER_REPLICAS WORKER_REPLICAS; do
     if [[ -z "${!v:-}" ]]; then
       log_error "Required env var $v is not set"
       exit 1
     fi
   done
 
-  # Optional defaults.
+  # Optional defaults (safe to default — not cost-bearing).
   : "${ARCH:=amd64}"
-  : "${WORKER_INSTANCE_TYPE:=m5.4xlarge}"
-  : "${MASTER_INSTANCE_TYPE:=m5.2xlarge}"
-  : "${WORKER_REPLICAS:=2}"
-  : "${MASTER_REPLICAS:=1}"
   : "${OWNER_TAG:=lab_kevin}"
   : "${PURPOSE_TAG:=cafe_okd}"
 
