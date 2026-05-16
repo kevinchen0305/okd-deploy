@@ -151,7 +151,10 @@ Next steps (each requires your own input — not automated):
   5. Lab SSH key:
        ssh-keygen -t ed25519 -f ~/.ssh/id_okd -N "" -C "okd-lab"
 
-  6. Project .env (see README.md "一次性設定" section)
+  6. Project .env — copy template and fill in your values:
+       cp .env.example .env
+       chmod 600 .env
+       \$EDITOR .env
 
   7. OKD CLI tools per version (~520MB):
        ./scripts/install-tools.sh --version 4.18.0-okd-scos.10

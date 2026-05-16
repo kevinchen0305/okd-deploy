@@ -15,20 +15,11 @@ OKD 4.18 on AWS 部署自動化（Lab 用）— IaC + Claude Code Skills 驅動�
 # 2. 下載 OKD 工具到 bin/<version>/
 ./scripts/install-tools.sh 4.18.0-okd-scos.10
 
-# 3. 準備環境變數（建議放 .env，git ignore）
-export BASE_DOMAIN="your-domain.example"
-export AMI_ID="ami-07da7dc69c82f82a5"
-export REGION="ap-northeast-1"
-export AZ="ap-northeast-1c"
-export VPC_CIDR="10.0.0.0/16"
-export PULL_SECRET=$(cat ~/pull-secret.json)
-export SSH_KEY=~/.ssh/id_rsa.pub
-
-# Sizing — 沒有 default，必須明確設定（避免無意中跑大機型）
-export MASTER_INSTANCE_TYPE="m5.2xlarge"   # lab 推薦；prod HA 用更大
-export WORKER_INSTANCE_TYPE="m5.xlarge"    # lab 推薦；重 workload 用 m5.4xlarge
-export MASTER_REPLICAS=1                   # lab=1, prod=3
-export WORKER_REPLICAS=2
+# 3. 準備環境變數 — 從 template 複製，填你自己的值
+cp .env.example .env
+chmod 600 .env
+$EDITOR .env
+# .env 已被 .gitignore，安全填 secret；.env.example 是 template 才會進 git
 
 # 4. 設定 STS / MFA 機制（lab：以 oathtool 自動 TOTP）
 echo "<base32-mfa-secret>" > ~/.okd-mfa-secret
