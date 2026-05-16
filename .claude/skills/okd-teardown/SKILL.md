@@ -42,6 +42,13 @@ scripts/teardown.sh --cluster <name>
 
 過程中 phase 推進為 `tearing_down`，最終成功為 `destroyed`。
 
+**進度回饋（required）**：teardown 在 `installing` 之後（含 `ready`）的 cluster 上預期 8–15 分鐘（installer destroy 5–10min + terraform destroy 1–2min + ccoctl delete 含 CloudFront disable 等待 ~5min）。每 ~5 分鐘給使用者一次摘要：
+- bg task output `tail -20`
+- 當前 layer：installer destroy / terraform destroy / ccoctl aws delete
+- 如果卡在某個 layer 超過 10 分鐘 → 主動提示可能要進 diagnose
+
+實作方式自選（`/loop 5m`、`Monitor`、ScheduleWakeup）。**driver agent 在 sub-agent 結束後要主動關進度 loop**。
+
 `--purge` 在 sub-agent 最後追加：
 
 ```bash
@@ -49,6 +56,8 @@ rm -rf clusters/<name>
 ```
 
 （即 status.json 也一併清掉。）
+
+⚠️ **絕對禁止組合**：teardown 失敗（terraform destroy 報錯、ccoctl delete fail 等）時**不要 `--purge`**。`--purge` 會把 tfstate 一起刪 → 無法再用 terraform 收尾，只能 aws CLI 手動 cascade。先讓 teardown 全綠再 purge。
 
 ### 第 2 步：失敗時自動 diagnose
 

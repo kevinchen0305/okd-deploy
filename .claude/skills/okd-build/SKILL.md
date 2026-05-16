@@ -104,11 +104,18 @@ scripts/preflight.sh --clusters dev01,dev02,dev03 --version 4.18.0-okd-scos.10 -
    scripts/install.sh --cluster <name>
    ```
 
+   **進度回饋（required）**：installing phase 預期 30–45 分鐘，**不可以靜默**。每 ~5 分鐘給使用者一次摘要，內容至少包含：
+   - `grep '^level=info' clusters/<name>/.openshift_install.log | tail -5` 最後幾個 milestone
+   - `oc --kubeconfig=clusters/<name>/auth/kubeconfig get co --no-headers | awk '$3!="True" || $4!="False" || $5!="False"'` 列出未健康 operator（kubeconfig 一旦生成就可以查）
+   - 當前 elapsed time + 預估剩餘
+
+   實作方式 agent 自選（`/loop 5m`、`Monitor` tool、ScheduleWakeup、etc.）。**靜默超過 30 分鐘等於失敗** — 使用者誤以為卡住會中斷 → 整個 build 報廢。
+
 9. **verifying**：phase=`verifying`
    ```bash
    scripts/verify.sh --cluster <name>
    ```
-   verify 全綠 → phase=`ready`。
+   verify 全綠 → phase=`ready`。**driver agent 收到 verify ok 後要主動關掉 step 8 的進度 loop**（CronDelete / TaskStop），避免 cron 繼續打 log。
 
 任一步驟失敗 → sub-agent 不再前進，**呼叫 `okd-diagnose` skill** 把該 cluster 名稱與當前 phase 丟過去，把 diagnose 結果回傳給主 agent。
 
