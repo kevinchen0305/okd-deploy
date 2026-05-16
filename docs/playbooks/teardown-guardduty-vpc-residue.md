@@ -81,7 +81,66 @@ scripts/teardown.sh --cluster <name>
 
 ### [c] 接受殘留、手動 cascade 刪 VPC
 
-如果 destroy 已經跑爛、tfstate 也壞了，照 [[teardown-orphaned-resource]] 的「暴力清乾淨」流程：endpoint → ENI → SG → subnet → IGW / NAT → VPC，逐個 aws cli delete-*。
+如果 destroy 已經跑爛、tfstate 也壞了（典型：`--purge` 把 tfstate 連目錄一起刪），照下面 cascade 順序逐個 aws cli 刪。**特別注意 EIP**：刪掉 NAT GW 後立刻用 `NetworkInterfaceId==null` 篩 EIP 會撈不到（AWS 那邊 association 尚未刷新）— 改用 cluster tag 抓：
+
+```bash
+CLUSTER=<name>
+REGION=<region>
+VPC_ID=$(aws ec2 describe-vpcs --filters Name=tag:Name,Values=${CLUSTER}-vpc --query 'Vpcs[0].VpcId' --output text)
+
+# 1. VPC endpoints (含 GuardDuty)
+aws ec2 describe-vpc-endpoints --filters Name=vpc-id,Values=$VPC_ID \
+  --query 'VpcEndpoints[].VpcEndpointId' --output text | tr '\t' '\n' \
+  | xargs -r aws ec2 delete-vpc-endpoints --vpc-endpoint-ids
+
+# 2. NAT GW (async)
+NAT_ID=$(aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=$VPC_ID \
+  Name=state,Values=available,pending --query 'NatGateways[0].NatGatewayId' --output text)
+[[ "$NAT_ID" != "None" ]] && aws ec2 delete-nat-gateway --nat-gateway-id "$NAT_ID"
+until [ "$(aws ec2 describe-nat-gateways --nat-gateway-ids "$NAT_ID" \
+       --query 'NatGateways[0].State' --output text 2>/dev/null)" = "deleted" ]; do sleep 15; done
+
+# 3. EIPs (by cluster tag, NOT by NetworkInterfaceId — 後者剛刪完 NAT GW 會 false-negative)
+aws ec2 describe-addresses --query "Addresses[?Tags[?Value=='${CLUSTER}']].AllocationId" --output text \
+  | tr '\t' '\n' | xargs -r -I{} aws ec2 release-address --allocation-id {}
+
+# 4. IGW
+IGW=$(aws ec2 describe-internet-gateways --filters Name=attachment.vpc-id,Values=$VPC_ID \
+  --query 'InternetGateways[0].InternetGatewayId' --output text)
+[[ "$IGW" != "None" ]] && aws ec2 detach-internet-gateway --internet-gateway-id "$IGW" --vpc-id "$VPC_ID" \
+  && aws ec2 delete-internet-gateway --internet-gateway-id "$IGW"
+
+# 5. custom route tables (non-main)
+aws ec2 describe-route-tables --filters Name=vpc-id,Values=$VPC_ID \
+  --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text | tr '\t' '\n' \
+  | while read -r RT; do
+      [[ -z "$RT" ]] && continue
+      aws ec2 describe-route-tables --route-table-ids "$RT" \
+        --query 'RouteTables[0].Associations[?Main==`false`].RouteTableAssociationId' --output text \
+        | xargs -r -n1 aws ec2 disassociate-route-table --association-id
+      aws ec2 delete-route-table --route-table-id "$RT"
+    done
+
+# 6. 殘留 ENI (GuardDuty endpoint 砍完 ENI 通常還在 available 一陣子)
+sleep 30
+aws ec2 describe-network-interfaces --filters Name=vpc-id,Values=$VPC_ID Name=status,Values=available \
+  --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | tr '\t' '\n' \
+  | xargs -r -I{} aws ec2 delete-network-interface --network-interface-id {}
+
+# 7. subnets
+aws ec2 describe-subnets --filters Name=vpc-id,Values=$VPC_ID \
+  --query 'Subnets[].SubnetId' --output text | tr '\t' '\n' \
+  | xargs -r -I{} aws ec2 delete-subnet --subnet-id {}
+
+# 8. GuardDuty SG
+aws ec2 describe-security-groups --filters Name=vpc-id,Values=$VPC_ID \
+  Name=group-name,Values=GuardDutyManagedSecurityGroup-* \
+  --query 'SecurityGroups[].GroupId' --output text | tr '\t' '\n' \
+  | xargs -r -I{} aws ec2 delete-security-group --group-id {}
+
+# 9. VPC
+aws ec2 delete-vpc --vpc-id "$VPC_ID"
+```
 
 ## 不會自動修復
 
