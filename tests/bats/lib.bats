@@ -112,3 +112,42 @@ teardown() {
   run_cmd touch "$TARGET" 2>/dev/null || true
   [ ! -f "$TARGET" ]
 }
+
+# Regression: parse_dry_run_flag 之前被包在 < <(...) process substitution
+# 裡呼叫，子 shell 設的 DRY_RUN 出不來 parent。改成寫 global PARSED_ARGS
+# 後必須在 caller shell 直接呼叫；以下測試鎖住這個契約。
+@test "parse_dry_run_flag: --dry-run 在 args 內時設 DRY_RUN=true" {
+  DRY_RUN=false
+  parse_dry_run_flag --dry-run
+  [ "$DRY_RUN" = "true" ]
+}
+
+@test "parse_dry_run_flag: --dry-run 從 PARSED_ARGS 內被濾掉，其他 args 保留順序" {
+  parse_dry_run_flag --cluster dev01 --dry-run --version 4.18
+  [ "${#PARSED_ARGS[@]}" -eq 4 ]
+  [ "${PARSED_ARGS[0]}" = "--cluster" ]
+  [ "${PARSED_ARGS[1]}" = "dev01" ]
+  [ "${PARSED_ARGS[2]}" = "--version" ]
+  [ "${PARSED_ARGS[3]}" = "4.18" ]
+}
+
+@test "parse_dry_run_flag: 沒 --dry-run 時 DRY_RUN 保持原值" {
+  DRY_RUN=false
+  parse_dry_run_flag --cluster dev01
+  [ "$DRY_RUN" = "false" ]
+  [ "${#PARSED_ARGS[@]}" -eq 2 ]
+}
+
+@test "parse_dry_run_flag: 重複呼叫會清空 PARSED_ARGS (不會累加)" {
+  parse_dry_run_flag --foo --bar
+  [ "${#PARSED_ARGS[@]}" -eq 2 ]
+  parse_dry_run_flag --baz
+  [ "${#PARSED_ARGS[@]}" -eq 1 ]
+  [ "${PARSED_ARGS[0]}" = "--baz" ]
+}
+
+@test "parse_dry_run_flag: 在 subshell 呼叫時 DRY_RUN 不會洩漏到 parent (記錄已知限制)" {
+  DRY_RUN=false
+  ( parse_dry_run_flag --dry-run )    # 故意包在 subshell
+  [ "$DRY_RUN" = "false" ]            # parent 不受影響 — 這是契約
+}
