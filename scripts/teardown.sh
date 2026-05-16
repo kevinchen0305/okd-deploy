@@ -85,9 +85,24 @@ main() {
   local tfdir
   tfdir="$(cluster_terraform "$cluster")"
   if [[ -d "$tfdir" && -f "$tfdir/terraform.tfstate" ]]; then
-    log_info "[$cluster] terraform destroy in $tfdir"
-    if ! run_cmd terraform -chdir="$tfdir" destroy -auto-approve; then
-      log_warn "[$cluster] terraform destroy failed — manual cleanup may be needed"
+    # terraform destroy needs the same -var inputs as apply; the VPC module
+    # marks cluster_name/region/az as required and the AWS provider itself
+    # needs AWS_REGION env. Pull both from status.json so callers don't have
+    # to remember to re-export .env before teardown.
+    local tf_region tf_az
+    tf_region="$(jq -r '.region // empty' "$status_file" 2>/dev/null)"
+    tf_az="$(jq -r '.az // empty' "$status_file" 2>/dev/null)"
+    if [[ -z "$tf_region" || -z "$tf_az" ]]; then
+      log_warn "[$cluster] status.json missing region/az — terraform destroy may fail"
+    fi
+
+    log_info "[$cluster] terraform destroy in $tfdir (region=$tf_region az=$tf_az)"
+    if ! AWS_REGION="$tf_region" AWS_DEFAULT_REGION="$tf_region" \
+         run_cmd terraform -chdir="$tfdir" destroy -auto-approve \
+           -var "cluster_name=$cluster" \
+           -var "region=$tf_region" \
+           -var "az=$tf_az"; then
+      log_warn "[$cluster] terraform destroy failed — manual cleanup may be needed (see docs/playbooks/teardown-guardduty-vpc-residue.md for the AWS-GuardDuty-injected-endpoint case)"
     fi
   else
     log_info "[$cluster] no terraform.tfstate — skipping terraform destroy"
@@ -111,84 +126,34 @@ main() {
   fi
 }
 
-# Delete IAM roles named <cluster>-*, OIDC providers tagged with cluster,
-# S3 buckets named <cluster>-oidc / <cluster>-* prefix-matched.
-# All deletions tolerate not-found.
+# Delegate ccoctl-created resource cleanup (IAM roles, OIDC provider,
+# S3 bucket, **and** CloudFront distribution) to ccoctl's own delete
+# subcommand. ccoctl knows the full set of objects it created, including
+# the CloudFront distribution that the previous manual cleanup missed.
 cleanup_ccoctl_resources() {
   local cluster="$1"
 
-  log_info "[$cluster] cleanup ccoctl IAM roles ($cluster-*)"
-  if [[ "$DRY_RUN" == "true" ]]; then
-    log_info "[DRY-RUN] aws iam list-roles | filter '${cluster}-*' | aws iam delete-role"
-  else
-    local roles role
-    roles="$(aws iam list-roles \
-        --query "Roles[?starts_with(RoleName, \`${cluster}-\`)].RoleName" \
-        --output text 2>/dev/null || true)"
-    for role in $roles; do
-      [[ -n "$role" ]] || continue
-      log_info "[$cluster] deleting IAM role $role"
-      # Detach managed policies, delete inline policies, then the role.
-      local pol pa pas
-      pas="$(aws iam list-attached-role-policies --role-name "$role" \
-          --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || true)"
-      for pa in $pas; do
-        [[ -n "$pa" ]] || continue
-        aws iam detach-role-policy --role-name "$role" --policy-arn "$pa" >/dev/null 2>&1 || true
-      done
-      local inlines
-      inlines="$(aws iam list-role-policies --role-name "$role" \
-          --query 'PolicyNames[]' --output text 2>/dev/null || true)"
-      for pol in $inlines; do
-        [[ -n "$pol" ]] || continue
-        aws iam delete-role-policy --role-name "$role" --policy-name "$pol" >/dev/null 2>&1 || true
-      done
-      aws iam delete-role --role-name "$role" >/dev/null 2>&1 || \
-        log_warn "[$cluster] delete-role $role failed (may already be gone)"
-    done
+  local version tdir
+  if ! version="$(get_cluster_version "$cluster" 2>/dev/null)"; then
+    log_warn "[$cluster] cluster version unknown — skipping ccoctl delete"
+    return 0
+  fi
+  tdir="$(tools_dir "$version" 2>/dev/null || true)"
+  if [[ -z "$tdir" || ! -x "$tdir/ccoctl" ]]; then
+    log_warn "[$cluster] ccoctl not available in $tdir — skipping ccoctl delete"
+    return 0
   fi
 
-  log_info "[$cluster] cleanup OIDC provider"
-  local cf_id="" oidc_arn=""
-  if [[ "$DRY_RUN" != "true" ]]; then
-    if [[ -f "$(cluster_status "$cluster")" ]]; then
-      cf_id="$(jq -r '.oidc_cloudfront // ""' "$(cluster_status "$cluster")")"
-    fi
-    local arns arn
-    arns="$(aws iam list-open-id-connect-providers \
-        --query 'OpenIDConnectProviderList[].Arn' --output text 2>/dev/null || true)"
-    for arn in $arns; do
-      [[ -n "$arn" ]] || continue
-      if [[ -n "$cf_id" && "$arn" == *"${cf_id}.cloudfront.net" ]]; then
-        oidc_arn="$arn"
-        break
-      fi
-    done
-    if [[ -n "$oidc_arn" ]]; then
-      log_info "[$cluster] deleting OIDC provider $oidc_arn"
-      aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$oidc_arn" \
-        >/dev/null 2>&1 || log_warn "[$cluster] delete-open-id-connect-provider failed"
-    else
-      log_info "[$cluster] no matching OIDC provider found (cf_id=${cf_id:-<unknown>})"
-    fi
-  else
-    log_info "[DRY-RUN] aws iam delete-open-id-connect-provider (matched by cluster's cloudfront id)"
+  local region
+  region="$(jq -r '.region // empty' "$(cluster_status "$cluster")" 2>/dev/null || true)"
+  if [[ -z "$region" ]]; then
+    log_warn "[$cluster] region not in status.json — skipping ccoctl delete"
+    return 0
   fi
 
-  log_info "[$cluster] cleanup S3 buckets prefixed ${cluster}-"
-  if [[ "$DRY_RUN" != "true" ]]; then
-    local buckets b
-    buckets="$(aws s3api list-buckets \
-        --query "Buckets[?starts_with(Name, \`${cluster}-\`)].Name" \
-        --output text 2>/dev/null || true)"
-    for b in $buckets; do
-      [[ -n "$b" ]] || continue
-      log_info "[$cluster] removing S3 bucket s3://$b"
-      aws s3 rb "s3://$b" --force >/dev/null 2>&1 || \
-        log_warn "[$cluster] rb s3://$b failed"
-    done
-  else
-    log_info "[DRY-RUN] aws s3 rb (cluster-prefixed buckets)"
+  log_info "[$cluster] ccoctl aws delete --name=$cluster --region=$region"
+  if ! run_cmd "$tdir/ccoctl" aws delete --name="$cluster" --region="$region"; then
+    log_warn "[$cluster] ccoctl aws delete failed — manual cleanup may be needed (IAM roles, OIDC, S3, CloudFront)"
   fi
 }
 
