@@ -83,7 +83,10 @@ main() {
 
     # Capture console URL — installer prints it on the final line.
     local console_url
-    console_url="$(grep -Eo 'https://console-openshift-console\.apps\.[^ ]+' "$log_file" | tail -n1 || true)"
+    # Exclude quotes: installer logs the URL twice (plain + timestamped form);
+    # the timestamped form ends with `"` which would land inside the captured
+    # URL and break the JSON we hand to set_status_field.
+    console_url="$(grep -Eo 'https://console-openshift-console\.apps\.[^ "]+' "$log_file" | tail -n1 || true)"
     if [[ -n "$console_url" ]]; then
       popd >/dev/null
       set_status_field "$cluster" '.console_url' "\"$console_url\""
