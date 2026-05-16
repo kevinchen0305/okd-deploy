@@ -1,0 +1,92 @@
+---
+id: teardown-guardduty-vpc-residue
+applies_to_phase: [tearing_down]
+signals:
+  - source: terraform_log
+    pattern: "DependencyViolation"
+  - source: terraform_log
+    pattern: "GuardDuty"
+severity: warning
+auto_fixable: partial
+---
+
+## 症狀
+
+`terraform destroy` 在拆 VPC / Subnet / SG 時報 `DependencyViolation`，且 VPC 內可以看到非 terraform 建的東西：
+
+```
+=== ENIs in VPC ===
+| Desc | VPC Endpoint Interface vpce-064463cbaa359c14c | <- 不是 NAT GW、不是 LB
+| Sgs  | sg-0755a7db42c3e3bfe                          |
+
+=== Security groups ===
+| Id | sg-0755a7db42c3e3bfe                                 |
+| Name | GuardDutyManagedSecurityGroup-vpc-053513aa60509427e |
+
+=== VPC endpoints ===
+| vpce-064463cbaa359c14c | com.amazonaws.<region>.guardduty-data | available |
+```
+
+關鍵 signal：endpoint service 名稱含 `guardduty-data`、SG 名以 `GuardDutyManagedSecurityGroup-` 開頭。
+
+## 原因
+
+AWS 帳號啟用 GuardDuty 的 **Runtime Monitoring**（或 EKS / Lambda / EC2 runtime monitoring）後，AWS 會**自動在每個新建 VPC 內**塞兩樣東西：
+
+1. **VPC interface endpoint** `com.amazonaws.<region>.guardduty-data` — 給 GuardDuty agent 回 traffic 用
+2. **Managed security group** `GuardDutyManagedSecurityGroup-vpc-<id>` — 套在那個 endpoint 的 ENI 上
+
+這兩個 **不是 terraform 建的**、**不在 tfstate 內**，所以 `terraform destroy` 不知道它們存在；但它們存在於 subnet / 引用 VPC，導致 subnet / VPC / SG 都無法刪。
+
+## 建議動作
+
+### [a] 手動清 GuardDuty 殘留後重跑 destroy（推薦）
+
+```bash
+VPC_ID=<vpc id, 從 terraform state 或 .env 對應的 cluster_name 反查>
+
+# 1. 找出 GuardDuty endpoint
+EP_IDS=$(aws ec2 describe-vpc-endpoints \
+  --filters "Name=vpc-id,Values=${VPC_ID}" \
+            "Name=service-name,Values=com.amazonaws.*.guardduty-data" \
+  --query 'VpcEndpoints[].VpcEndpointId' --output text)
+echo "GuardDuty endpoints: $EP_IDS"
+
+# 2. 刪 endpoint（會 async 釋放 ENI）
+[[ -n "$EP_IDS" ]] && aws ec2 delete-vpc-endpoints --vpc-endpoint-ids $EP_IDS
+
+# 3. 等 ENI 變 available（最多 60s）
+sleep 30
+
+# 4. 砍 orphan ENI（有時 AWS GC 不夠快）
+aws ec2 describe-network-interfaces \
+  --filters "Name=vpc-id,Values=${VPC_ID}" "Name=status,Values=available" \
+  --query 'NetworkInterfaces[].NetworkInterfaceId' --output text \
+  | tr '\t' '\n' \
+  | xargs -r -I{} aws ec2 delete-network-interface --network-interface-id {}
+
+# 5. 砍 GuardDuty managed SG
+SG_IDS=$(aws ec2 describe-security-groups \
+  --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=GuardDutyManagedSecurityGroup-*" \
+  --query 'SecurityGroups[].GroupId' --output text)
+[[ -n "$SG_IDS" ]] && for sg in $SG_IDS; do aws ec2 delete-security-group --group-id "$sg"; done
+
+# 6. 重跑 teardown（teardown.sh 自己會帶 -var 重 destroy）
+scripts/teardown.sh --cluster <name>
+```
+
+### [b] 從 GuardDuty 那側關掉 VPC integration（一次性解法）
+
+開 GuardDuty Console → Settings → VPC Flow Logs / Runtime Monitoring → 取消對應功能。**會影響整個帳號的 GuardDuty 偵測能力**，務必跟 security team 確認。
+
+### [c] 接受殘留、手動 cascade 刪 VPC
+
+如果 destroy 已經跑爛、tfstate 也壞了，照 [[teardown-orphaned-resource]] 的「暴力清乾淨」流程：endpoint → ENI → SG → subnet → IGW / NAT → VPC，逐個 aws cli delete-*。
+
+## 不會自動修復
+
+GuardDuty 是 security 服務，盲目刪 endpoint / 改 GuardDuty settings 都可能違反 org policy。AI 只能列出殘留 + 建議命令，實際執行要人確認。
+
+## 相關
+
+- [[teardown-orphaned-resource]] — DependencyViolation 一般情況

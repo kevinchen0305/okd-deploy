@@ -19,6 +19,7 @@ Diagnose skill 載入此檔，依 `applies_to_phase` 過濾候選 playbook。
 | ccoctl-s3-conflict | setting_up_iam | blocker | no |
 | machineset-no-subnet | patching_manifests | blocker | partial |
 | teardown-orphaned-resource | tearing_down | warning | no |
+| teardown-guardduty-vpc-residue | tearing_down | warning | partial |
 
 ## 升格流程
 
