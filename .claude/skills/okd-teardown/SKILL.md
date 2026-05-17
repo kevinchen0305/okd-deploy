@@ -35,10 +35,12 @@ scripts/teardown.sh --cluster <name>
 
 | 當前 phase | 動作 |
 |---|---|
-| `installing` 之後（含 `ready`、`verifying`） | `bin/<ver>/openshift-install destroy cluster --dir=clusters/<name>` → terraform destroy → 清 ccoctl 殘留 |
-| `setting_up_iam` ~ `patching_manifests` | 跳過 installer destroy；terraform destroy → 清 ccoctl 殘留 |
-| `provisioning_vpc` 失敗 | 只跑 terraform destroy |
+| `installing` 之後（含 `ready`、`verifying`） | `bin/<ver>/openshift-install destroy cluster --dir=clusters/<name>` → worker EIP disassociate 安全網 → terraform destroy → 清 ccoctl 殘留 |
+| `setting_up_iam` ~ `patching_manifests` | 跳過 installer destroy；worker EIP disassociate 安全網 → terraform destroy → 清 ccoctl 殘留 |
+| `provisioning_vpc` 失敗 | worker EIP disassociate 安全網 → 只跑 terraform destroy |
 | `pending` | 只清 `clusters/<name>/`（無 AWS 資源） |
+
+**Worker EIP 處理**:teardown 在 terraform destroy 前會用 tag(`okd-deploy/role=worker-eip`)找出仍 associated 的 worker EIP 並 force disassociate — 這是安全網,以防 `openshift-install destroy` 跳過或半途失敗留下殘留 association。EIP allocation 本身由 terraform 管理,`terraform destroy` 階段自動 release,不需額外動作。`worker_replicas` 從 terraform output 反推,避免跟 apply 時的 `-var` 不同步。
 
 過程中 phase 推進為 `tearing_down`，最終成功為 `destroyed`。
 

@@ -1,6 +1,6 @@
 ---
 id: quota-exceeded-eip
-applies_to_phase: [provisioning_vpc]
+applies_to_phase: [provisioning_vpc, installing]
 signals:
   - source: terraform_log
     pattern: "AddressLimitExceeded"
@@ -12,7 +12,7 @@ auto_fixable: no
 
 ## 症狀
 
-Terraform 在建 NAT Gateway / Bootstrap public IP 階段失敗：
+Terraform 在建 NAT Gateway / worker EIP 階段失敗：
 
 ```
 Error: allocating EIP: AddressLimitExceeded: The maximum number of addresses has been reached.
@@ -20,7 +20,15 @@ Error: allocating EIP: AddressLimitExceeded: The maximum number of addresses has
 
 ## 原因
 
-Region 的 Elastic IP 配額（預設 5）用滿。一個 OKD 集群通常吃 1–3 個 EIP（NAT GW × AZ 數，加 bootstrap public）。
+Region 的 Elastic IP 配額（預設 5）用滿。這份 repo 的 VPC 模組每 cluster 會預配:
+
+- 1 NAT Gateway EIP
+- `var.worker_replicas` 個 worker EIP（給 `scripts/attach-worker-eips.sh` 之後綁到 worker EC2）
+- 加 bootstrap 階段 installer 自己會臨時拉 1 個 public IP（非 EIP，不算）
+
+換算:`worker_replicas=2` → 每 cluster 3 EIP;並行 build 2 clusters = 6 EIP → 已超 default quota 5。
+
+**preflight 已經會在 build 前擋住** — 此 playbook 主要為 quota 在 build 中途被外部消耗(別人也在用同 region)而留。
 
 ## 建議動作
 

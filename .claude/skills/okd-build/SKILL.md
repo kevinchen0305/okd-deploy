@@ -43,10 +43,13 @@ description: Use when user wants to build (create) one or more OKD 4.18 clusters
 
 ### 第 0 步：Preflight（共用一次）
 
-呼叫 `okd-preflight` skill，把全部 cluster 名稱與 `--version` 一次丟進去：
+呼叫 `okd-preflight` skill。把全部 cluster 名稱、`--version`、以及 `--worker-replicas` 一次丟進去 — worker-replicas 用來算 EIP 需求（每 cluster 1 NAT + N worker），preflight 在配額不夠時會直接擋住 build：
 
 ```bash
-scripts/preflight.sh --clusters dev01,dev02,dev03 --version 4.18.0-okd-scos.10 --region "$REGION"
+scripts/preflight.sh --clusters dev01,dev02,dev03 \
+  --version 4.18.0-okd-scos.10 \
+  --region "$REGION" \
+  --worker-replicas "$WORKER_REPLICAS"
 ```
 
 `overall=fail` → 終止，把 preflight 的結果丟給使用者，必要時讓 `okd-diagnose` 接手。
@@ -67,13 +70,17 @@ scripts/preflight.sh --clusters dev01,dev02,dev03 --version 4.18.0-okd-scos.10 -
    echo "<version>" > clusters/<name>/version
    ```
 
-2. **provisioning_vpc**：把 phase 推進到 `provisioning_vpc`，跑 Terraform：
+2. **provisioning_vpc**：把 phase 推進到 `provisioning_vpc`，跑 Terraform。**`worker_replicas` 必須帶入** — VPC 模組會 `count = var.worker_replicas` 預先 allocate 對應數量的 EIP，留給後面 `attach-worker-eips.sh` 使用：
    ```bash
    mkdir -p clusters/<name>/terraform
    cp -r modules/vpc/* clusters/<name>/terraform/
    cd clusters/<name>/terraform
    terraform init
-   terraform apply -auto-approve -var "cluster_name=<name>" -var "region=$REGION" -var "az=$AZ"
+   terraform apply -auto-approve \
+     -var "cluster_name=<name>" \
+     -var "region=$REGION" \
+     -var "az=$AZ" \
+     -var "worker_replicas=$WORKER_REPLICAS"
    ```
 
 3. **setting_up_iam**：phase=`setting_up_iam`
@@ -111,11 +118,17 @@ scripts/preflight.sh --clusters dev01,dev02,dev03 --version 4.18.0-okd-scos.10 -
 
    實作方式 agent 自選（`/loop 5m`、`Monitor` tool、ScheduleWakeup、etc.）。**靜默超過 30 分鐘等於失敗** — 使用者誤以為卡住會中斷 → 整個 build 報廢。
 
-9. **verifying**：phase=`verifying`
+9. **attach worker EIPs**：把 Terraform 第 2 步預配的 EIP 綁到剛起來的 worker。執行時間視 MachineSet 收斂速度,通常 install 完之後 worker 已經 Running 了,腳本內部會 poll 直到 N 個 worker 進入 `Running` 才開始 associate。
    ```bash
-   scripts/verify.sh --cluster <name>
+   scripts/attach-worker-eips.sh --cluster <name>
    ```
-   verify 全綠 → phase=`ready`。**driver agent 收到 verify ok 後要主動關掉 step 8 的進度 loop**（CronDelete / TaskStop），避免 cron 繼續打 log。
+   失敗(timeout、associate-address 報錯)→ fail_with_diagnose,進入 diagnose。已知限制:**之後 MachineSet scale-out 的新 worker 不會自動拿 EIP** — lab 用法可接受,需要時手動再跑一次本腳本。
+
+10. **verifying**：phase=`verifying`
+    ```bash
+    scripts/verify.sh --cluster <name>
+    ```
+    verify 全綠 → phase=`ready`。verify 會包含 `worker_eips` 一項,確認每個 tagged EIP 都已 associated。**driver agent 收到 verify ok 後要主動關掉 step 8 的進度 loop**（CronDelete / TaskStop），避免 cron 繼續打 log。
 
 任一步驟失敗 → sub-agent 不再前進，**呼叫 `okd-diagnose` skill** 把該 cluster 名稱與當前 phase 丟過去，把 diagnose 結果回傳給主 agent。
 

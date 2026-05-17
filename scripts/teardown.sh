@@ -96,12 +96,39 @@ main() {
       log_warn "[$cluster] status.json missing region/az — terraform destroy may fail"
     fi
 
-    log_info "[$cluster] terraform destroy in $tfdir (region=$tf_region az=$tf_az)"
+    # worker_replicas from terraform state (matches what was applied). Falls
+    # back to module default 2 if the state predates the worker-EIP feature.
+    local tf_worker_replicas
+    tf_worker_replicas="$(terraform -chdir="$tfdir" output -json worker_eip_allocation_ids 2>/dev/null | jq 'length' 2>/dev/null || echo 2)"
+
+    # Safety net: force-disassociate any worker EIPs still associated. If
+    # `openshift-install destroy` skipped or partially failed, EIPs can still
+    # point at terminated/half-gone instances, which blocks terraform from
+    # releasing them (`AuthFailure` / `InvalidAddress.Locked`).
+    if [[ -n "$tf_region" ]]; then
+      local stuck_assocs
+      stuck_assocs="$(aws ec2 describe-addresses --region "$tf_region" \
+        --filters "Name=tag:kubernetes.io/cluster/$cluster,Values=shared" \
+                  "Name=tag:okd-deploy/role,Values=worker-eip" \
+        --query 'Addresses[?AssociationId!=`null`].AssociationId' \
+        --output text 2>/dev/null || true)"
+      if [[ -n "$stuck_assocs" ]]; then
+        local a
+        for a in $stuck_assocs; do
+          log_info "[$cluster] disassociating worker EIP association $a (safety net before terraform destroy)"
+          run_cmd aws ec2 disassociate-address --region "$tf_region" --association-id "$a" || \
+            log_warn "[$cluster] disassociate $a failed — terraform destroy may need manual fix-up"
+        done
+      fi
+    fi
+
+    log_info "[$cluster] terraform destroy in $tfdir (region=$tf_region az=$tf_az worker_replicas=$tf_worker_replicas)"
     if ! AWS_REGION="$tf_region" AWS_DEFAULT_REGION="$tf_region" \
          run_cmd terraform -chdir="$tfdir" destroy -auto-approve \
            -var "cluster_name=$cluster" \
            -var "region=$tf_region" \
-           -var "az=$tf_az"; then
+           -var "az=$tf_az" \
+           -var "worker_replicas=$tf_worker_replicas"; then
       log_warn "[$cluster] terraform destroy failed — manual cleanup may be needed (see docs/playbooks/teardown-guardduty-vpc-residue.md for the AWS-GuardDuty-injected-endpoint case)"
     fi
   else

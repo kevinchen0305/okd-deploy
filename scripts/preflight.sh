@@ -8,7 +8,10 @@
 #     --clusters dev01,dev02 \
 #     --version 4.18.0-okd-scos.10 \
 #     --region ap-northeast-1 \
-#     [--json] [--dry-run]
+#     [--worker-replicas N] [--json] [--dry-run]
+#
+# --worker-replicas defaults to env WORKER_REPLICAS or 2. Drives the EIP
+# quota check: each cluster needs (1 NAT + N worker) EIPs.
 #
 # Exit: 0 = all pass, 2 = preflight failure, 1 = generic error.
 # IMPORTANT: this script never modifies AWS state nor creates clusters/<name>/.
@@ -38,18 +41,22 @@ main() {
 
   local clusters_csv="" version="" region=""
   local json_out=false
+  local worker_replicas="${WORKER_REPLICAS:-2}"
   while (($# > 0)); do
     case "$1" in
-      --clusters) clusters_csv="${2:?}"; shift 2 ;;
-      --version)  version="${2:?}";      shift 2 ;;
-      --region)   region="${2:?}";       shift 2 ;;
-      --json)     json_out=true;         shift   ;;
-      -h|--help)  usage ;;
+      --clusters)        clusters_csv="${2:?}";    shift 2 ;;
+      --version)         version="${2:?}";         shift 2 ;;
+      --region)          region="${2:?}";          shift 2 ;;
+      --worker-replicas) worker_replicas="${2:?}"; shift 2 ;;
+      --json)            json_out=true;            shift   ;;
+      -h|--help)         usage ;;
       *) log_error "Unknown arg: $1"; usage ;;
     esac
   done
   [[ -n "$clusters_csv" && -n "$version" && -n "$region" ]] || \
     { log_error "--clusters, --version, --region all required"; usage; }
+  [[ "$worker_replicas" =~ ^[0-9]+$ ]] || \
+    { log_error "--worker-replicas must be a non-negative integer (got: $worker_replicas)"; exit 1; }
 
   require_cmd aws jq
 
@@ -75,7 +82,7 @@ main() {
   check_name_conflicts "${clusters[@]}"
   check_ami       "$region"
   check_account_consistency
-  check_quotas    "$region" "$n"
+  check_quotas    "$region" "$n" "$worker_replicas"
 
   # Compute final pass/fail.
   local fails warns
@@ -232,13 +239,15 @@ check_account_consistency() {
 #     L-1216C47A  Running On-Demand Standard (A,C,D,H,I,M,R,T,Z) instances (vCPUs)
 # ────────────────────────────────────────────────────
 check_quotas() {
-  local region="$1" n="$2"
+  local region="$1" n="$2" worker_replicas="$3"
 
   # Per-cluster usage estimate.
   # Rough: 1 master m5.2xlarge (8 vCPU) + 2 worker m5.4xlarge (16 vCPU each = 32) + bootstrap (8) ≈ 48 vCPUs/cluster.
   # Net steady-state (post-bootstrap) ≈ 40, but use 48 to allow bootstrap overlap.
+  # EIPs: 1 for NAT GW + one per worker (terraform pre-allocates them so
+  #       attach-worker-eips.sh can associate after install).
   local need_vpcs=$n
-  local need_eips=$n
+  local need_eips=$(( n * (1 + worker_replicas) ))
   local need_nats=$n
   local need_vcpus=$(( n * 48 ))
 

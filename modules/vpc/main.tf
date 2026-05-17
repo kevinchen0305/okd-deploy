@@ -140,6 +140,22 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private.id
 }
 
+resource "aws_eip" "worker" {
+  count  = var.worker_replicas
+  domain = "vpc"
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name                    = "${var.cluster_name}-worker-eip-${count.index}"
+      "okd-deploy/role"       = "worker-eip"
+      "okd-deploy/worker-idx" = tostring(count.index)
+    },
+  )
+
+  depends_on = [aws_internet_gateway.this]
+}
+
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.this.id
   service_name      = "com.amazonaws.${var.region}.s3"

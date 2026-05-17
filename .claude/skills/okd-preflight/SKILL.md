@@ -16,10 +16,16 @@ description: Use before any AWS-touching OKD operation; validates quota/STS/AMI/
 ## 入口腳本
 
 ```bash
-scripts/preflight.sh --clusters <name1>[,<name2>,...] --version <okd-version> --region <aws-region>
+scripts/preflight.sh \
+  --clusters <name1>[,<name2>,...] \
+  --version <okd-version> \
+  --region <aws-region> \
+  [--worker-replicas N]
 ```
 
 預設 `--version` 為 `4.18.0-okd-scos.10`。`--region` 若未提供，從環境變數 `REGION` 讀取。
+
+`--worker-replicas` 預設讀 `WORKER_REPLICAS` 環境變數,沒設就 `2`。它**直接影響 EIP 配額檢查**:每個 cluster 需 `1 (NAT GW) + N (workers)` 個 EIP,VPC 模組會用 terraform 預先 allocate 給之後 attach 用。預設 region quota 是 5,並行 build 多 cluster 時容易踩線 — 不夠就 `quota_eips=fail` 擋住,不讓 build 開始。
 
 ## 行為
 

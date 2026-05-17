@@ -36,3 +36,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "worker_replicas" {
+  description = "Number of worker nodes; module pre-allocates one EIP per worker so attach-worker-eips.sh can associate them after install."
+  type        = number
+  default     = 2
+}

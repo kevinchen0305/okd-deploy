@@ -32,6 +32,7 @@ scripts/verify.sh --cluster <name>
    - `oc get co`：所有 ClusterOperator `Available=True / Degraded=False / Progressing=False`
    - 核心 workloads：`openshift-apiserver`、`openshift-authentication`、`openshift-ingress`、`openshift-dns` 全 `Ready`
    - networking：DNS 解析 `console-openshift-console.apps.<name>.<base_domain>` 可解、可 curl 200
+   - `worker_eips`：用 tag(`kubernetes.io/cluster/<name>=shared` + `okd-deploy/role=worker-eip`)查所有預配的 worker EIP,確認每一個都已 associated 到 EC2 instance。dangling 就 fail,suggestion 是「re-run scripts/attach-worker-eips.sh」
 3. 結果寫進 `clusters/<name>/verify-report.json`，每項標 `ok | warn | fail`，並把 `status.json.verify_summary` 同步更新。
 4. 若全綠且當前 phase 為 `verifying` → 推進到 `ready`。
 
@@ -46,6 +47,7 @@ scripts/verify.sh --cluster <name>
    | clusteroperators | fail | ingress: Degraded=True |
    | core_workloads | ok | – |
    | networking | warn | DNS 解析正常但 curl 慢 |
+   | worker_eips | ok | associated=2/2 |
 
 3. **若任何 ClusterOperator `Degraded=True` 或任何項目 fail** → 自動呼叫 `okd-diagnose` skill，把當前 cluster 與 phase 丟進去。把 diagnose 的建議直接附在 verify 報告之後。
 4. 若全 ok → 回應使用者「集群健康」+ kubeconfig 路徑 + console URL。

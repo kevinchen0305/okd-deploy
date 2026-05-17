@@ -8,7 +8,7 @@ Diagnose skill 載入此檔，依 `applies_to_phase` 過濾候選 playbook。
 | ID | Phase 範圍 | Severity | Auto-fixable |
 |---|---|---|---|
 | quota-exceeded-vpc | provisioning_vpc | blocker | no |
-| quota-exceeded-eip | provisioning_vpc | blocker | no |
+| quota-exceeded-eip | provisioning_vpc, installing | blocker | no |
 | quota-exceeded-ec2 | installing | blocker | no |
 | sts-expired | * | blocker | partial (re-run sts-creds.sh) |
 | sts-mfa-failed | getting_creds | blocker | no |

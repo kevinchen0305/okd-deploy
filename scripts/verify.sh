@@ -39,7 +39,7 @@ main() {
   done
   [[ -n "$cluster" ]] || { log_error "--cluster is required"; usage; }
 
-  require_cmd jq curl
+  require_cmd jq curl aws
 
   local cdir kc version tdir oc report
   cdir="$(cluster_dir "$cluster")"
@@ -95,6 +95,7 @@ main() {
     record core_pods          ok "dry-run"
     record console_http       ok "dry-run"
     record api_healthz        ok "dry-run"
+    record worker_eips        ok "dry-run"
     [[ "$smoke" == "true" ]] && record smoke_workload ok "dry-run"
     finalize_report "$cluster" "$report" true
     return 0
@@ -217,7 +218,36 @@ main() {
   fi
 
   # ────────────────────────────────────────────────────
-  # Check 6 (opt-in): smoke workload.
+  # Check 6: worker EIPs — every tagged worker EIP must be associated
+  # to an EC2 instance. attach-worker-eips.sh runs before verify; if any
+  # EIP is dangling here, the cluster has a stable-IP regression.
+  # ────────────────────────────────────────────────────
+  local region eip_json eip_total eip_assoc eip_unassoc
+  region="$(jq -r '.region // empty' "$(cluster_status "$cluster")")"
+  if [[ -z "$region" ]]; then
+    record worker_eips warn "status.json missing .region — skipping"
+  else
+    eip_json="$(aws ec2 describe-addresses --region "$region" \
+      --filters "Name=tag:kubernetes.io/cluster/$cluster,Values=shared" \
+                "Name=tag:okd-deploy/role,Values=worker-eip" \
+      --output json 2>/dev/null || echo '{"Addresses":[]}')"
+    eip_total="$(jq '.Addresses | length' <<<"$eip_json")"
+    if (( eip_total == 0 )); then
+      record worker_eips warn "no tagged worker EIPs found (worker_replicas=0?)"
+    else
+      eip_assoc="$(jq '[.Addresses[] | select(.AssociationId != null and .InstanceId != null)] | length' <<<"$eip_json")"
+      eip_unassoc=$(( eip_total - eip_assoc ))
+      local eip_detail="associated=$eip_assoc/$eip_total"
+      if (( eip_unassoc == 0 )); then
+        record worker_eips ok "$eip_detail"
+      else
+        record worker_eips fail "$eip_detail (unassociated=$eip_unassoc — re-run scripts/attach-worker-eips.sh)"
+      fi
+    fi
+  fi
+
+  # ────────────────────────────────────────────────────
+  # Check 7 (opt-in): smoke workload.
   # ────────────────────────────────────────────────────
   if [[ "$smoke" == "true" ]]; then
     local proj="okd-smoke-$$"
